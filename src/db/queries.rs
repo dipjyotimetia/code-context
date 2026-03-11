@@ -687,9 +687,8 @@ pub fn symbol_names_by_prefix(
     limit: usize,
 ) -> rusqlite::Result<Vec<String>> {
     let pattern = format!("{}%", prefix);
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT name FROM symbols WHERE name LIKE ?1 ORDER BY name LIMIT ?2",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT name FROM symbols WHERE name LIKE ?1 ORDER BY name LIMIT ?2")?;
     let rows = stmt
         .query_map(params![pattern, limit as u32], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -704,9 +703,8 @@ pub fn file_paths_by_prefix(
     limit: usize,
 ) -> rusqlite::Result<Vec<String>> {
     let pattern = format!("{}%", prefix);
-    let mut stmt = conn.prepare(
-        "SELECT path FROM files WHERE path LIKE ?1 ORDER BY path LIMIT ?2",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT path FROM files WHERE path LIKE ?1 ORDER BY path LIMIT ?2")?;
     let rows = stmt
         .query_map(params![pattern, limit as u32], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;

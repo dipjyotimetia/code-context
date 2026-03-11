@@ -53,9 +53,28 @@ impl LanguageRegistry {
     /// Static list of language names for completions (no instance needed).
     pub fn static_language_names() -> &'static [&'static str] {
         &[
-            "bash", "c", "cpp", "csharp", "css", "go", "hcl", "html", "java",
-            "javascript", "json", "kotlin", "markdown", "php", "python", "ruby",
-            "rust", "scala", "swift", "toml", "typescript", "yaml",
+            "bash",
+            "c",
+            "cpp",
+            "csharp",
+            "css",
+            "go",
+            "hcl",
+            "html",
+            "java",
+            "javascript",
+            "json",
+            "kotlin",
+            "markdown",
+            "php",
+            "python",
+            "ruby",
+            "rust",
+            "scala",
+            "swift",
+            "toml",
+            "typescript",
+            "yaml",
         ]
     }
 

@@ -400,8 +400,8 @@ impl ServerHandler for CodeContextServer {
         _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, rmcp::ErrorData>>
-           + Send
-           + '_ {
+    + Send
+    + '_ {
         let resource_templates = resources::resource_templates();
         async move {
             Ok(ListResourceTemplatesResult {
@@ -428,7 +428,8 @@ impl ServerHandler for CodeContextServer {
         &self,
         request: CompleteRequestParams,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CompleteResult, rmcp::ErrorData>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<CompleteResult, rmcp::ErrorData>> + Send + '_
+    {
         let db = std::sync::Arc::clone(&self.state.db);
         async move {
             let prefix = request.argument.value.as_str();
@@ -454,7 +455,7 @@ impl ServerHandler for CodeContextServer {
 
                 // Static language completions
                 "language" => crate::indexer::languages::LanguageRegistry::static_language_names()
-                    .into_iter()
+                    .iter()
                     .filter(|l| l.starts_with(prefix))
                     .map(|s| s.to_string())
                     .collect(),
@@ -462,8 +463,7 @@ impl ServerHandler for CodeContextServer {
                 _ => vec![],
             };
 
-            let completion =
-                CompletionInfo::with_all_values(values).unwrap_or_default();
+            let completion = CompletionInfo::with_all_values(values).unwrap_or_default();
             Ok(CompleteResult::new(completion))
         }
     }

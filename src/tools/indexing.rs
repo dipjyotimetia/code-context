@@ -26,10 +26,7 @@ pub async fn index_repository(
 
     // Canonicalize the path to resolve symlinks and prevent traversal
     let root = root.canonicalize().map_err(|e| {
-        rmcp::ErrorData::invalid_params(
-            format!("Cannot resolve path '{}': {e}", args.path),
-            None,
-        )
+        rmcp::ErrorData::invalid_params(format!("Cannot resolve path '{}': {e}", args.path), None)
     })?;
 
     if !root.is_dir() {
@@ -46,7 +43,7 @@ pub async fn index_repository(
     // blocking indexing thread can send progress updates without calling
     // block_on() from within spawn_blocking (which would panic).
     let on_progress: Option<Box<dyn Fn(usize, usize) + Send>>;
-    if let Some(token) = meta.get_progress_token().map(|t| t.clone()) {
+    if let Some(token) = meta.get_progress_token() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, usize)>(64);
 
         // Async forwarder: reads from the channel and sends MCP progress
@@ -108,10 +105,7 @@ pub async fn watch_repository(
 
     // Canonicalize the path to resolve symlinks and prevent traversal
     let root = root.canonicalize().map_err(|e| {
-        rmcp::ErrorData::invalid_params(
-            format!("Cannot resolve path '{}': {e}", args.path),
-            None,
-        )
+        rmcp::ErrorData::invalid_params(format!("Cannot resolve path '{}': {e}", args.path), None)
     })?;
 
     if !root.is_dir() {

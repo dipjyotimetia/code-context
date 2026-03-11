@@ -20,13 +20,13 @@ pub struct Database {
 
 impl Database {
     pub fn init(db_path: &Path) -> anyhow::Result<Self> {
-        let manager = SqliteConnectionManager::file(db_path)
-            .with_init(schema::configure_connection);
+        let manager =
+            SqliteConnectionManager::file(db_path).with_init(schema::configure_connection);
 
         // In-memory databases (':memory:') create a separate, empty database for
         // each connection, so pool size must be 1 to ensure all callers share
         // the same in-memory schema.  This path is only hit in tests.
-        let is_memory = db_path.to_str().map_or(false, |s| s == ":memory:");
+        let is_memory = db_path.to_str() == Some(":memory:");
         let pool = if is_memory {
             Pool::builder()
                 .max_size(1)

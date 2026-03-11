@@ -119,19 +119,14 @@ fn read_overview(db: &Arc<Database>) -> Result<ReadResourceResult, McpError> {
         text.push_str(&format!("  {lang}: {count}\n"));
     }
 
-    Ok(ReadResourceResult::new(vec![ResourceContents::text(
-        text,
-        OVERVIEW_URI,
-    )
-    .with_mime_type("text/plain")]))
+    Ok(ReadResourceResult::new(vec![
+        ResourceContents::text(text, OVERVIEW_URI).with_mime_type("text/plain"),
+    ]))
 }
 
 fn read_file(db: &Arc<Database>, path: &str) -> Result<ReadResourceResult, McpError> {
     if path.contains("..") {
-        return Err(McpError::invalid_params(
-            "path traversal not allowed",
-            None,
-        ));
+        return Err(McpError::invalid_params("path traversal not allowed", None));
     }
 
     let content = db
@@ -142,7 +137,7 @@ fn read_file(db: &Arc<Database>, path: &str) -> Result<ReadResourceResult, McpEr
         Some(text) => {
             let uri = format!("code-context://file/{path}");
             Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(text, uri).with_mime_type("text/plain")
+                ResourceContents::text(text, uri).with_mime_type("text/plain"),
             ]))
         }
         None => Err(McpError::invalid_params(
@@ -184,12 +179,15 @@ fn read_symbol(db: &Arc<Database>, name: &str) -> Result<ReadResourceResult, Mcp
     if !refs.is_empty() {
         text.push_str("\nReferences:\n");
         for r in &refs {
-            text.push_str(&format!("  {} :{} ({})\n", r.file_path, r.start_line, r.kind));
+            text.push_str(&format!(
+                "  {} :{} ({})\n",
+                r.file_path, r.start_line, r.kind
+            ));
         }
     }
 
     let uri = format!("code-context://symbol/{name}");
     Ok(ReadResourceResult::new(vec![
-        ResourceContents::text(text, uri).with_mime_type("text/plain")
+        ResourceContents::text(text, uri).with_mime_type("text/plain"),
     ]))
 }
