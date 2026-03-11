@@ -173,9 +173,10 @@ pub async fn semantic_search(
 
     #[cfg(feature = "semantic")]
     {
-        let semantic = state.semantic.as_ref().as_ref().ok_or_else(|| {
+        let semantic_mutex = state.semantic.as_ref().as_ref().ok_or_else(|| {
             rmcp::ErrorData::internal_error("Semantic engine not initialized", None)
         })?;
+        let mut semantic = semantic_mutex.lock().await;
 
         let limit = args.limit.unwrap_or(10);
         let results = semantic

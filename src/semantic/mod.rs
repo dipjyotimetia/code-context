@@ -22,13 +22,13 @@ impl SemanticEngine {
         Ok(Self { model })
     }
 
-    pub fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    pub fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let embeddings = self.model.embed(texts.to_vec(), None)?;
         Ok(embeddings)
     }
 
     pub async fn embed_and_store(
-        &self,
+        &mut self,
         file_path: &str,
         chunks: &[String],
         db: &Arc<Database>,
@@ -69,7 +69,7 @@ impl SemanticEngine {
     }
 
     pub async fn search(
-        &self,
+        &mut self,
         query: &str,
         limit: usize,
         db: &Arc<Database>,

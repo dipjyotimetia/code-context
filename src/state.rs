@@ -14,7 +14,7 @@ pub struct AppState {
     pub registry: Arc<LanguageRegistry>,
     pub watcher: Arc<Mutex<Option<FileWatcher>>>,
     #[cfg(feature = "semantic")]
-    pub semantic: Arc<Option<SemanticEngine>>,
+    pub semantic: Arc<Option<Mutex<SemanticEngine>>>,
 }
 
 impl AppState {
@@ -30,7 +30,7 @@ impl AppState {
 
     #[cfg(feature = "semantic")]
     pub fn with_semantic(mut self, engine: SemanticEngine) -> Self {
-        self.semantic = Arc::new(Some(engine));
+        self.semantic = Arc::new(Some(Mutex::new(engine)));
         self
     }
 }
@@ -58,7 +58,7 @@ mod tests {
         let registry = LanguageRegistry::new();
         let state = AppState::new(db, registry);
 
-        let engine = SemanticEngine::new("test_model_path".into()).unwrap(); // Assuming minimal mockable signature or real loading fails
+        let engine = SemanticEngine::new().unwrap(); // Assuming minimal mockable signature or real loading fails
         let state = state.with_semantic(engine);
         assert!(state.semantic.is_some());
     }
