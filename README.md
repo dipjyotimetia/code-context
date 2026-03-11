@@ -2,9 +2,27 @@
 
 > MCP server providing deep codebase context via tree-sitter indexing.
 
-`code-context` is a Rust MCP server that indexes a local repository into SQLite and exposes fast tools for code search, symbol lookup, navigation, and project-level context.
+`code-context` sits between MCP clients and a local repository index. Clients call MCP tools over HTTP, and the server answers from persisted repository data instead of reparsing the codebase on every request.
 
-It is designed for MCP clients that need reliable code intelligence without re-parsing a repository on every request.
+```mermaid
+flowchart LR
+    Client[MCP client] -->|HTTP requests| Axum[Axum server]
+    Axum -->|/mcp| RMCP[rmcp StreamableHttpService]
+    RMCP --> Server[CodeContextServer]
+
+    Server --> State[Shared AppState]
+    Server --> Tools[Tool handlers]
+    Server --> Prompts[Prompt handlers]
+    State --> DB[(SQLite database)]
+    State --> Registry[LanguageRegistry]
+    State --> Watcher[Optional FileWatcher]
+    State --> Semantic[Optional SemanticEngine]
+
+    Server --> Repo[Local repository]
+    Watcher --> Repo
+    Repo --> Indexer[Indexer]
+    Indexer --> DB
+```
 
 ## Features
 
@@ -12,6 +30,7 @@ It is designed for MCP clients that need reliable code intelligence without re-p
 - SQLite-backed storage with FTS5 full-text search
 - Symbol, reference, and import lookup
 - File, symbol, and project overview tools
+- Built-in MCP prompts for common exploration workflows
 - Incremental re-indexing with file watching
 - Optional semantic search via the `semantic` feature
 
@@ -31,7 +50,7 @@ index_repository({
 })
 ```
 
-Then use tools such as `get_project_overview`, `search_code`, `search_symbols`, `find_definition`, and `get_symbol_context`.
+Then use tools such as `get_project_overview`, `search_code`, `search_symbols`, `find_definition`, and `get_symbol_context`, or start with a built-in prompt such as `onboard_repository`.
 
 ## Supported languages
 
@@ -85,6 +104,8 @@ The server exposes tools for:
 - import, call-graph, and dependency views
 - file, symbol, and project context
 
+It also exposes guided MCP prompts for common workflows such as onboarding a repository, exploring a codebase question, tracing dependencies, and reviewing change impact.
+
 ## Development
 
 ```bash
@@ -96,6 +117,8 @@ make run
 ## Documentation
 
 - [Architecture](./docs/architecture.md)
+- [Design decisions](./docs/design-decisions.md)
+- [Why Rust?](./docs/design-decisions.md#decision-1-implement-the-server-in-rust)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Security Policy](./SECURITY.md)
 - [License](./LICENSE)

@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use rmcp::model::CallToolResult;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::db::queries;
 use crate::state::AppState;
+
+/// Maximum time for a blocking query before we return a timeout error.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchCodeArgs {
@@ -13,8 +18,10 @@ pub struct SearchCodeArgs {
     pub query: String,
     #[schemars(description = "Optional: filter by language (e.g. 'rust', 'python')")]
     pub language: Option<String>,
-    #[schemars(description = "Maximum number of results to return (default: 20)")]
+    #[schemars(description = "Maximum number of results to return (default: 20, max: 100)")]
     pub limit: Option<u32>,
+    #[schemars(description = "Number of results to skip for pagination (default: 0)")]
+    pub offset: Option<u32>,
 }
 
 pub async fn search_code(
@@ -24,19 +31,25 @@ pub async fn search_code(
     let db = state.db.clone();
     let query = args.query.clone();
     let language = args.language.clone();
-    let limit = args.limit.unwrap_or(20);
+    let limit = args.limit.unwrap_or(20).min(100);
+    let offset = args.offset.unwrap_or(0);
 
-    let results = tokio::task::spawn_blocking(move || {
-        db.with_conn(|conn| {
-            Ok(queries::search_fts(
-                conn,
-                &query,
-                language.as_deref(),
-                limit,
-            )?)
-        })
-    })
+    let results = tokio::time::timeout(
+        QUERY_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db.with_conn(|conn| {
+                Ok(queries::search_fts(
+                    conn,
+                    &query,
+                    language.as_deref(),
+                    limit,
+                    offset,
+                )?)
+            })
+        }),
+    )
     .await
+    .map_err(|_| rmcp::ErrorData::internal_error("search query timed out (30s limit)", None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("search error: {e}"), None))?;
 
@@ -70,7 +83,7 @@ pub struct SearchSymbolsArgs {
     pub kind: Option<String>,
     #[schemars(description = "Optional: filter by language")]
     pub language: Option<String>,
-    #[schemars(description = "Maximum number of results to return (default: 20)")]
+    #[schemars(description = "Maximum number of results to return (default: 20, max: 100)")]
     pub limit: Option<usize>,
 }
 
@@ -82,20 +95,24 @@ pub async fn search_symbols(
     let name = args.name.clone();
     let kind = args.kind.clone();
     let language = args.language.clone();
-    let limit = args.limit.unwrap_or(20);
+    let limit = args.limit.unwrap_or(20).min(100);
 
-    let results = tokio::task::spawn_blocking(move || {
-        db.with_conn(|conn| {
-            Ok(queries::search_symbols(
-                conn,
-                &name,
-                kind.as_deref(),
-                language.as_deref(),
-                limit,
-            )?)
-        })
-    })
+    let results = tokio::time::timeout(
+        QUERY_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db.with_conn(|conn| {
+                Ok(queries::search_symbols(
+                    conn,
+                    &name,
+                    kind.as_deref(),
+                    language.as_deref(),
+                    limit,
+                )?)
+            })
+        }),
+    )
     .await
+    .map_err(|_| rmcp::ErrorData::internal_error("symbol search timed out (30s limit)", None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("symbol search error: {e}"), None))?;
 
@@ -200,7 +217,7 @@ pub struct SearchByRegexArgs {
     pub pattern: String,
     #[schemars(description = "Optional: filter by language")]
     pub language: Option<String>,
-    #[schemars(description = "Maximum number of results to return (default: 20)")]
+    #[schemars(description = "Maximum number of results to return (default: 20, max: 100)")]
     pub limit: Option<u32>,
 }
 
@@ -211,19 +228,23 @@ pub async fn search_by_regex(
     let db = state.db.clone();
     let pattern = args.pattern.clone();
     let language = args.language.clone();
-    let limit = args.limit.unwrap_or(20);
+    let limit = args.limit.unwrap_or(20).min(100);
 
-    let results = tokio::task::spawn_blocking(move || {
-        db.with_conn(|conn| {
-            Ok(queries::search_by_regex(
-                conn,
-                &pattern,
-                language.as_deref(),
-                limit,
-            )?)
-        })
-    })
+    let results = tokio::time::timeout(
+        QUERY_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db.with_conn(|conn| {
+                Ok(queries::search_by_regex(
+                    conn,
+                    &pattern,
+                    language.as_deref(),
+                    limit,
+                )?)
+            })
+        }),
+    )
     .await
+    .map_err(|_| rmcp::ErrorData::internal_error("regex search timed out (30s limit)", None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("regex search error: {e}"), None))?;
 
@@ -311,6 +332,7 @@ mod tests {
             query: "test".to_string(),
             language: None,
             limit: None,
+            offset: None,
         };
 
         let result = search_code(&state, args).await.unwrap();
@@ -357,6 +379,7 @@ mod tests {
             query: "test".to_string(),
             language: None,
             limit: None,
+            offset: None,
         };
 
         let result = search_code(&state, args).await.unwrap();

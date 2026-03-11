@@ -20,9 +20,18 @@ pub async fn index_repository(
     args: IndexRepositoryArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let root = PathBuf::from(&args.path);
+
+    // Canonicalize the path to resolve symlinks and prevent traversal
+    let root = root.canonicalize().map_err(|e| {
+        rmcp::ErrorData::invalid_params(
+            format!("Cannot resolve path '{}': {e}", args.path),
+            None,
+        )
+    })?;
+
     if !root.is_dir() {
         return Err(rmcp::ErrorData::invalid_params(
-            format!("Not a directory: {}", args.path),
+            format!("Not a directory: {}", root.display()),
             None,
         ));
     }
@@ -64,9 +73,18 @@ pub async fn watch_repository(
     args: WatchRepositoryArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let root = PathBuf::from(&args.path);
+
+    // Canonicalize the path to resolve symlinks and prevent traversal
+    let root = root.canonicalize().map_err(|e| {
+        rmcp::ErrorData::invalid_params(
+            format!("Cannot resolve path '{}': {e}", args.path),
+            None,
+        )
+    })?;
+
     if !root.is_dir() {
         return Err(rmcp::ErrorData::invalid_params(
-            format!("Not a directory: {}", args.path),
+            format!("Not a directory: {}", root.display()),
             None,
         ));
     }
@@ -75,7 +93,7 @@ pub async fn watch_repository(
 
     // Stop existing watcher if any
     if let Some(ref mut w) = *watcher_guard {
-        w.stop();
+        w.stop().await;
     }
 
     let new_watcher = FileWatcher::start(
@@ -97,7 +115,7 @@ pub async fn stop_watching(state: &AppState) -> Result<CallToolResult, rmcp::Err
 
     if let Some(ref mut w) = *watcher_guard {
         let root = w.root().to_string_lossy().to_string();
-        w.stop();
+        w.stop().await;
         *watcher_guard = None;
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             format!("Stopped watching {}", root),

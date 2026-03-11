@@ -187,6 +187,7 @@ pub fn search_fts(
     query: &str,
     language: Option<&str>,
     limit: u32,
+    offset: u32,
 ) -> rusqlite::Result<Vec<SearchResult>> {
     let fts_query = if let Some(lang) = language {
         format!(
@@ -208,10 +209,10 @@ pub fn search_fts(
          JOIN files f ON code_fts.rowid = f.id
          WHERE code_fts MATCH ?1
          ORDER BY rank
-         LIMIT ?2",
+         LIMIT ?2 OFFSET ?3",
     )?;
 
-    let rows = stmt.query_map(params![fts_query, limit], |row| {
+    let rows = stmt.query_map(params![fts_query, limit, offset], |row| {
         Ok(SearchResult {
             file_path: row.get(0)?,
             // Provide a fallback if snippet is null for some reason
@@ -486,14 +487,18 @@ pub fn insert_imports_batch(
 }
 
 /// Search by regex pattern across file contents.
+///
+/// Safety: regex is compiled with size_limit to prevent ReDoS attacks.
+/// File row count is capped to prevent unbounded memory usage.
 pub fn search_by_regex(
     conn: &Connection,
     pattern: &str,
     language: Option<&str>,
     limit: u32,
 ) -> rusqlite::Result<Vec<SearchResult>> {
-    // We use LIKE with the pattern embedded, but the actual regex matching
-    // happens in the caller. Here we fetch candidate files and their content.
+    // Cap the limit to prevent excessive results
+    let limit = limit.min(200);
+
     let sql = if language.is_some() {
         "SELECT f.path, fc.content, f.language
          FROM files_content fc JOIN files f ON fc.file_id = f.id
@@ -505,10 +510,13 @@ pub fn search_by_regex(
          LIMIT ?1"
     };
 
+    // Cap file candidates to prevent loading entire DB into memory
+    let max_candidates = (limit * 10).min(2000);
+
     let mut stmt = conn.prepare(sql)?;
     let mut all_rows: Vec<(String, String, String)> = Vec::new();
     if let Some(lang) = language {
-        let mapped = stmt.query_map(params![lang, limit * 10], |row| {
+        let mapped = stmt.query_map(params![lang, max_candidates], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -519,7 +527,7 @@ pub fn search_by_regex(
             all_rows.push(r?);
         }
     } else {
-        let mapped = stmt.query_map(params![limit * 10], |row| {
+        let mapped = stmt.query_map(params![max_candidates], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -531,8 +539,11 @@ pub fn search_by_regex(
         }
     }
 
-    // Compile regex and search through content
-    let re = regex::Regex::new(pattern)
+    // Compile regex with size limit to prevent ReDoS attacks
+    let re = regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 20) // 1 MB compiled regex limit
+        .dfa_size_limit(1 << 20)
+        .build()
         .map_err(|e| rusqlite::Error::InvalidParameterName(format!("invalid regex: {e}")))?;
 
     let mut results = Vec::new();
@@ -757,7 +768,7 @@ mod tests {
         // some fts5 usages require the full set of configured columns. Wait, it's actually returning Null for file_path.
         upsert_fts(&conn, file_id, "doc.txt", "", "Hello world of rust", "text").unwrap();
 
-        let results = search_fts(&conn, "world", None, 10).unwrap();
+        let results = search_fts(&conn, "world", None, 10, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].file_path, "doc.txt");
     }
@@ -778,7 +789,7 @@ mod tests {
         assert!(defs.is_empty());
 
         // search_fts on missing query
-        let results = search_fts(&conn, "nonexistentword", None, 10).unwrap();
+        let results = search_fts(&conn, "nonexistentword", None, 10, 0).unwrap();
         assert!(results.is_empty());
 
         // find_references on missing symbol

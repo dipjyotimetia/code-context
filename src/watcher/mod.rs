@@ -28,8 +28,8 @@ impl FileWatcher {
         let cancel_clone = cancel.clone();
         let root_clone = root.clone();
 
-        // Channel to bridge notify callbacks into Tokio
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<PathBuf>>();
+        // Bounded channel to bridge notify callbacks into Tokio with backpressure
+        let (tx, mut rx) = mpsc::channel::<Vec<PathBuf>>(64);
 
         // Create the debouncer — runs on its own OS thread
         let mut debouncer = new_debouncer(
@@ -53,7 +53,9 @@ impl FileWatcher {
                             }
                         }
                         if !paths.is_empty() {
-                            let _ = tx.send(paths);
+                            // Use try_send to avoid blocking the OS notify thread;
+                            // drop events if consumer is overloaded
+                            let _ = tx.try_send(paths);
                         }
                     }
                     Err(errors) => {
@@ -118,10 +120,16 @@ impl FileWatcher {
         &self.root
     }
 
-    pub fn stop(&mut self) {
+    pub async fn stop(&mut self) {
         self.cancel.cancel();
         if let Some(handle) = self.handle.take() {
-            handle.abort();
+            // Give the task a chance to finish gracefully before aborting
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(_) => {}
+                Err(_) => {
+                    warn!(root = %self.root.display(), "watcher task did not stop within timeout");
+                }
+            }
         }
         info!(root = %self.root.display(), "stopped file watcher");
     }
@@ -151,7 +159,7 @@ mod tests {
         assert_eq!(watcher.root(), &root);
         assert!(!watcher.cancel.is_cancelled());
 
-        watcher.stop();
+        watcher.stop().await;
         assert!(watcher.cancel.is_cancelled());
     }
 

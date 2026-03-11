@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use rmcp::model::CallToolResult;
@@ -30,9 +30,10 @@ pub async fn get_call_graph(
         db.with_conn(|conn| {
             let mut edges: Vec<(String, String, String)> = Vec::new(); // (caller_file, caller, callee)
             let mut visited: BTreeSet<String> = BTreeSet::new();
-            let mut queue: Vec<(String, u32)> = vec![(symbol.clone(), 0)];
+            let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+            queue.push_back((symbol.clone(), 0));
 
-            while let Some((current, depth)) = queue.pop() {
+            while let Some((current, depth)) = queue.pop_front() {
                 if depth >= max_depth || visited.contains(&current) {
                     continue;
                 }
@@ -65,7 +66,7 @@ pub async fn get_call_graph(
                                 r.symbol_name.clone(),
                             ));
                             if !visited.contains(&r.symbol_name) {
-                                queue.push((r.symbol_name.clone(), depth + 1));
+                                queue.push_back((r.symbol_name.clone(), depth + 1));
                             }
                         }
                     }
@@ -150,9 +151,10 @@ pub async fn get_dependency_tree(
         db.with_conn(|conn| {
             let mut result: BTreeMap<String, Vec<String>> = BTreeMap::new();
             let mut visited: BTreeSet<String> = BTreeSet::new();
-            let mut queue: Vec<(String, u32)> = vec![(file_path.clone(), 0)];
+            let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+            queue.push_back((file_path.clone(), 0));
 
-            while let Some((current, depth)) = queue.pop() {
+            while let Some((current, depth)) = queue.pop_front() {
                 if depth >= max_depth || visited.contains(&current) {
                     continue;
                 }
@@ -164,7 +166,7 @@ pub async fn get_dependency_tree(
                     let deps: Vec<String> = imports.iter().map(|i| i.source_path.clone()).collect();
                     for dep in &deps {
                         if !visited.contains(dep) {
-                            queue.push((dep.clone(), depth + 1));
+                            queue.push_back((dep.clone(), depth + 1));
                         }
                     }
                     result.insert(current, deps);
@@ -181,7 +183,7 @@ pub async fn get_dependency_tree(
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     for imp in &importers {
                         if !visited.contains(imp) {
-                            queue.push((imp.clone(), depth + 1));
+                            queue.push_back((imp.clone(), depth + 1));
                         }
                     }
                     result.insert(current, importers);

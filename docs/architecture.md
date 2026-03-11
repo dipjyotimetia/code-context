@@ -1,222 +1,242 @@
 # Architecture
 
-This document describes how the current `code-context` server is put together: process startup, request handling, indexing, storage, file watching, and the feature-gated semantic-search path.
+This document gives maintainers a quick mental model of how `code-context` is put together at runtime.
 
-## System overview
+It focuses on the current implementation:
 
-At a high level, the server combines:
+- Rust MCP server built with **Axum** and **rmcp**
+- streamable HTTP transport mounted at **`/mcp`**
+- repository indexing powered by **tree-sitter**
+- persistent storage in **SQLite** with **FTS5**
+- incremental updates via **notify-debouncer-full**
+- optional semantic search behind the **`semantic`** Cargo feature
 
-- **Axum** for the HTTP service
-- **rmcp** for MCP server behavior and tool routing
-- **tree-sitter** for parsing and code structure extraction
-- **SQLite** for persistent indexing and search
-- **notify-debouncer-full** for incremental re-indexing
+## System context
 
-The entry point is [`src/main.rs`](../src/main.rs). It initializes shared state, mounts an rmcp streamable HTTP service at `/mcp`, and serves it through Axum.
+`code-context` sits between MCP clients and a local repository index. Clients call MCP tools over HTTP, and the server answers from persisted repository data instead of reparsing the codebase on every request.
 
-## Runtime architecture
+```mermaid
+flowchart LR
+    Client[MCP client] -->|HTTP requests| Axum[Axum server]
+    Axum -->|/mcp| RMCP[rmcp StreamableHttpService]
+    RMCP --> Server[CodeContextServer]
 
-```text
-MCP client
-   |
-   v
-axum HTTP server
-   |
-   v
-rmcp StreamableHttpService (/mcp)
-   |
-   v
-CodeContextServer
-   |
-   +--> tools/indexing.rs
-   +--> tools/search.rs
-   +--> tools/navigate.rs
-   +--> tools/graph.rs
-   +--> tools/context.rs
-            |
-            v
-         AppState
-            |
-            +--> Database
-            +--> LanguageRegistry
-            +--> FileWatcher (optional, mutable)
-            +--> SemanticEngine (optional, feature-gated)
+    Server --> State[Shared AppState]
+    Server --> Tools[Tool handlers]
+    Server --> Prompts[Prompt handlers]
+    State --> DB[(SQLite database)]
+    State --> Registry[LanguageRegistry]
+    State --> Watcher[Optional FileWatcher]
+    State --> Semantic[Optional SemanticEngine]
+
+    Server --> Repo[Local repository]
+    Watcher --> Repo
+    Repo --> Indexer[Indexer]
+    Indexer --> DB
 ```
 
-### Startup sequence
+## Runtime components
 
-`main` performs the following steps:
+### Process entry point
 
-1. Initializes tracing with `tracing-subscriber`
-2. Reads `HOST`, `PORT`, and `DATABASE_PATH`
-3. Opens or creates the SQLite database and initializes schema
-4. Builds the tree-sitter language registry
-5. Optionally initializes the semantic engine when the `semantic` feature is enabled
-6. Creates an rmcp `StreamableHttpService`
-7. Mounts that service under `/mcp` in an Axum router
-8. Binds a `TcpListener` and serves until shutdown
+[`src/main.rs`](../src/main.rs) is responsible for:
 
-The current HTTP server configuration uses:
+1. initializing tracing
+2. reading `HOST`, `PORT`, and `DATABASE_PATH`
+3. opening SQLite and initializing schema
+4. building the language registry
+5. optionally initializing the semantic engine when the `semantic` feature is enabled
+6. creating the rmcp streamable HTTP service
+7. mounting it under `/mcp` in an Axum router
+8. serving until shutdown
 
-- `stateful_mode: true`
-- `json_response: false`
-- `sse_keep_alive: None`
+Default configuration:
 
-Graceful shutdown is handled with a `CancellationToken` and `ctrl-c` signal handling.
+| Setting | Default |
+| --- | --- |
+| `HOST` | `127.0.0.1` |
+| `PORT` | `3001` |
+| `DATABASE_PATH` | `code_context.db` |
 
-## Major modules
+### Shared application state
 
-### `src/main.rs`
+[`src/state.rs`](../src/state.rs) defines `AppState`, which is cloned into MCP handlers:
 
-Bootstraps the process, configures logging, creates shared state, and starts the HTTP server.
+| Field | Purpose |
+| --- | --- |
+| `db: Arc<Database>` | Shared database access |
+| `registry: Arc<LanguageRegistry>` | Language detection, parsers, and queries |
+| `watcher: Arc<tokio::sync::Mutex<Option<FileWatcher>>>` | Active watcher, if any |
+| `semantic: Arc<Option<SemanticEngine>>` | Optional semantic engine when compiled with `semantic` |
 
-### `src/server.rs`
+This keeps long-lived resources in one place and makes handler construction cheap.
 
-Defines `CodeContextServer`, registers MCP tools with rmcp macros, and advertises tool capability metadata.
+### Server and tool surface
 
-### `src/state.rs`
+[`src/server.rs`](../src/server.rs) defines `CodeContextServer` and registers both MCP tools and MCP prompts.
 
-Defines `AppState`, the shared runtime container:
+The tool set is grouped by concern:
 
-- `db: Arc<Database>`
-- `registry: Arc<LanguageRegistry>`
-- `watcher: Arc<tokio::sync::Mutex<Option<FileWatcher>>>`
-- `semantic: Arc<Option<SemanticEngine>>` when the `semantic` feature is enabled
+- indexing and watch control
+- text and symbol search
+- definition and reference navigation
+- graph-style views
+- file, symbol, and project context
 
-This keeps long-lived resources in one place and makes them cheap to clone into request handlers.
+The prompt set provides guided workflows such as:
 
-### `src/db`
+- onboarding a repository
+- exploring a codebase question
+- understanding a symbol
+- tracing file dependencies
+- reviewing change impact
 
-Contains the SQLite layer:
+Handlers mostly validate arguments, clone shared state, and offload synchronous work to blocking threads when needed.
 
-- `schema.rs` initializes tables, indexes, FTS, and pragmas
-- `queries.rs` contains the CRUD and search operations used by tools and the indexer
-- `mod.rs` wraps a single `rusqlite::Connection` in a `Mutex`
+### Database layer
 
-The current database design uses one SQLite connection guarded by a mutex. That means database access is serialized inside the process, even though tool handlers may run concurrently.
+[`src/db/mod.rs`](../src/db/mod.rs) wraps a single `rusqlite::Connection` in a `Mutex`.
 
-### `src/indexer`
+That means:
 
-Contains repository scanning and per-file indexing logic:
+- reads and writes are persisted in one local SQLite database
+- database access is serialized inside this process
+- call sites use `with_conn` or `with_tx` to keep transaction handling consistent
 
-- `walker.rs` discovers candidate files
-- `languages.rs` defines the language registry and extension mapping
-- `parser.rs` extracts definitions, references, imports, and doc comments
-- `graph.rs` computes scope paths from AST nesting
-- `mod.rs` coordinates repository and single-file indexing
+Schema creation lives in [`src/db/schema.rs`](../src/db/schema.rs), and query logic lives in [`src/db/queries.rs`](../src/db/queries.rs).
 
-### `src/tools`
+### Indexer
 
-Implements MCP tool handlers grouped by concern:
+[`src/indexer`](../src/indexer/) is responsible for turning repository files into structured records:
 
-- `indexing.rs`
-- `search.rs`
-- `navigate.rs`
-- `graph.rs`
-- `context.rs`
+- `walker.rs` finds candidate files
+- `languages.rs` maps extensions to languages and loads queries/parsers
+- `parser.rs` extracts definitions, references, and imports
+- `graph.rs` computes scope paths from AST ancestry
+- `mod.rs` coordinates full-repository and single-file indexing
 
-Most tool handlers do lightweight validation, then offload blocking work with `tokio::task::spawn_blocking`.
+### Watcher
 
-### `src/watcher`
+[`src/watcher/mod.rs`](../src/watcher/mod.rs) owns recursive file watching and incremental reindexing.
 
-Owns the recursive file watcher and incremental re-index loop.
-
-### `src/semantic`
-
-Provides the optional embedding model and similarity search implementation behind the `semantic` Cargo feature.
+It uses `notify-debouncer-full` with an 800 ms debounce window and feeds debounced paths into a Tokio task.
 
 ## Request flow
 
-For a typical MCP tool call, the runtime path is:
+For a typical MCP request, the path through the system looks like this:
 
-1. **HTTP request arrives** at the Axum server under `/mcp`
-2. **rmcp dispatches** the request to the registered tool on `CodeContextServer`
-3. **Tool handler validates arguments**
-4. **Blocking work is offloaded** with `spawn_blocking` where needed
-5. **Database and/or indexer code runs**
-6. **Result is formatted** into `CallToolResult`
-7. **rmcp returns** the MCP tool response
+```mermaid
+sequenceDiagram
+    participant C as MCP client
+    participant A as Axum
+    participant R as rmcp service
+    participant S as CodeContextServer
+    participant B as spawn_blocking worker
+    participant D as SQLite / indexer
 
-### Why `spawn_blocking` is used
+    C->>A: HTTP request
+    A->>R: Route /mcp
+    R->>S: Dispatch tool or prompt call
+    S->>S: Validate args
+    alt synchronous or CPU-heavy work needed
+        S->>B: spawn_blocking(...)
+        B->>D: Query DB / parse / walk files
+        D-->>B: Result
+        B-->>S: Result
+    else lightweight path
+        S->>D: Fast in-process work
+        D-->>S: Result
+    end
+    S-->>R: Result payload
+    R-->>A: MCP response
+    A-->>C: HTTP response
+```
 
-Two important parts of the system are synchronous:
+### Why `spawn_blocking` shows up often
 
-- `rusqlite` database operations
-- tree-sitter parsing and repository walking
+Several important code paths are synchronous:
 
-The handlers push those operations onto blocking worker threads so the Tokio async runtime is not stalled by CPU-heavy or synchronous I/O work.
+- `rusqlite` database access
+- repository walking
+- file reads
+- tree-sitter parsing and extraction
+
+Tool handlers use `tokio::task::spawn_blocking` so the async runtime is not stalled by synchronous I/O or CPU-heavy parsing work.
 
 ## Indexing pipeline
 
-The indexing path is implemented primarily in [`src/indexer/mod.rs`](../src/indexer/mod.rs).
+Repository indexing is implemented primarily in [`src/indexer/mod.rs`](../src/indexer/mod.rs).
 
-### 1. Repository discovery
+### 1. Discover candidate files
 
-`walk_repository` uses `ignore::WalkBuilder` and:
+[`walker.rs`](../src/indexer/walker.rs) uses `ignore::WalkBuilder` and:
 
-- respects `.gitignore`, global gitignore, and git exclude rules
+- respects `.gitignore`, global ignore, and git exclude rules
 - does not follow symlinks
 - caps traversal depth at 50
 - skips files larger than 1 MB
 - skips likely binary files by checking for NUL bytes in the first 8 KB
 - keeps only files whose extension maps to a registered language
 
-The output is a sorted list of candidate files.
+The resulting file list is sorted before indexing begins.
 
-### 2. Batch processing
+### 2. Process files in batches
 
-`index_repository` processes files in batches of 100.
+`index_repository` processes files in batches of 100. Each batch runs inside `Database::with_tx`.
 
-Each batch runs inside a database transaction via `Database::with_tx`. This gives a useful middle ground:
+This gives a practical middle ground:
 
-- better performance than committing every file separately
-- partial progress is preserved if a later batch fails
+- fewer commits than per-file writes
+- partial progress if a later batch fails
 
-### 3. Per-file indexing
+### 3. Index each file
 
-For each file:
+For each file, the indexer:
 
-1. Convert the path to a repository-relative path
-2. Detect language from extension
-3. Read the file as UTF-8 text
-4. Compute a SHA-256 content hash
-5. Compare with the stored hash and skip unchanged content
-6. If changed, delete prior rows for that file
-7. Upsert the `files` record
-8. Store raw content in `files_content`
-9. Parse the file with tree-sitter
-10. Extract definitions, references, and imports
-11. Compute scope paths from AST nesting
-12. Insert symbols, refs, and imports in batches
-13. Upsert an FTS row in `code_fts`
+1. makes the path repository-relative
+2. detects the language
+3. reads the file as UTF-8 text
+4. computes a SHA-256 content hash
+5. skips unchanged files when the stored hash matches
+6. removes stale rows for changed files
+7. upserts the `files` row
+8. stores raw content in `files_content`
+9. parses the file with tree-sitter
+10. extracts definitions, references, and imports
+11. computes `scope_path` values from AST ancestry
+12. inserts symbols, refs, and imports
+13. updates the FTS row in `code_fts`
 
-The indexer tracks counts for:
+The indexer reports:
 
 - indexed files
 - skipped files
 - symbols found
 - references found
-- indexing errors
+- errors
 
-### Query-based vs generic parsing
+### Parsing strategy
 
-`parser.rs` first tries language-specific tree-sitter queries from the registry. If no query is available for that language, it falls back to generic AST pattern matching for common constructs such as functions, classes, methods, structs, enums, interfaces, modules, and namespaces.
+Extraction in [`parser.rs`](../src/indexer/parser.rs) is layered:
 
-That fallback keeps indexing useful across more formats, but the highest-fidelity extraction comes from the dedicated query-backed languages.
+1. try a language-specific tree-sitter query from the registry
+2. if no query exists, fall back to generic AST-based extraction for common constructs
+
+The query-backed path is more precise. The fallback keeps unsupported or lightly-supported languages useful for basic indexing.
 
 ### Scope-path enrichment
 
-After extraction, `indexer/graph.rs` walks ancestor nodes to compute a dot-separated `scope_path` such as:
+After parsing, [`graph.rs`](../src/indexer/graph.rs) walks ancestor nodes to compute a dotted scope path such as:
 
 ```text
 MyType.my_method
 ```
 
-That metadata is stored alongside symbol rows and used by symbol-search and summary outputs.
+This metadata improves symbol-oriented responses without changing the underlying source.
 
-## SQLite schema
+## Storage model
 
-The schema is initialized in [`src/db/schema.rs`](../src/db/schema.rs).
+Schema initialization lives in [`src/db/schema.rs`](../src/db/schema.rs).
 
 ### Connection pragmas
 
@@ -226,196 +246,135 @@ The server enables:
 - `PRAGMA foreign_keys = ON`
 - `PRAGMA busy_timeout = 5000`
 
-These settings improve concurrent read/write behavior, preserve referential integrity, and reduce transient lock failures.
-
-### Tables
+### Core tables
 
 | Table | Purpose |
-|---|---|
+| --- | --- |
 | `schema_version` | Tracks schema version metadata |
-| `files` | One row per indexed file, including path, hash, language, size, and indexed time |
-| `symbols` | Definitions extracted from source files |
-| `refs` | Symbol references found in source files |
-| `imports` | Import/dependency edges at the file level |
-| `files_content` | Stored raw file content for context, summaries, regex search, and snippets |
-| `embeddings` | Semantic-search chunks and embedding vectors |
-| `code_fts` | FTS5 table for full-text code search |
+| `files` | One row per indexed file |
+| `symbols` | Definitions extracted from files |
+| `refs` | Symbol references extracted from files |
+| `imports` | File-level import relationships |
+| `files_content` | Stored raw content for context and regex search |
+| `embeddings` | Semantic chunks and vectors |
+| `code_fts` | FTS5 full-text search index |
 
-### Relationships
+### Data relationships
 
-```text
-files
- ├── symbols
- ├── refs
- ├── imports
- ├── files_content
- └── embeddings
+```mermaid
+erDiagram
+    FILES ||--o{ SYMBOLS : contains
+    FILES ||--o{ REFS : contains
+    FILES ||--o{ IMPORTS : contains
+    FILES ||--|| FILES_CONTENT : stores
+    FILES ||--o{ EMBEDDINGS : stores
 ```
 
-Most child tables use foreign keys back to `files(id)` with `ON DELETE CASCADE`, so removing a file record clears its dependent indexing data automatically.
+Most child tables point back to `files(id)` with `ON DELETE CASCADE`, so deleting a file row clears dependent index data automatically.
 
-### Search-specific structures
+### Search-oriented storage
 
-#### `code_fts`
+- `code_fts` stores symbol names and content for full-text search
+- `files_content` supports context retrieval and regex search over stored source
+- `embeddings` exists in the schema even when the `semantic` feature is not enabled
 
-The FTS5 table stores:
-
-- `symbol_names`
-- `content`
-
-Search results join back to `files` by `rowid = files.id` to recover file paths and languages.
-
-#### `embeddings`
-
-The embeddings table stores:
-
-- owning `file_id`
-- `chunk_text`
-- `chunk_start`
-- `chunk_end`
-- raw embedding bytes in `embedding`
-
-This table exists in the schema regardless of whether the semantic feature is enabled.
-
-## Watcher behavior
+## Watcher lifecycle
 
 The watcher is implemented in [`src/watcher/mod.rs`](../src/watcher/mod.rs).
 
-### Behavior
+### What it does
 
-- Uses `notify-debouncer-full`
-- Debounces events for **800 ms**
-- Watches the repository **recursively**
-- Filters out `Access` events to avoid re-indexing on reads
-- Bridges debounced callbacks into Tokio via an unbounded channel
-- Re-indexes only files in supported languages
-- Removes deleted files from the index
+- watches the repository recursively
+- debounces events for 800 ms
+- ignores `Access` events to avoid reindexing on reads
+- sends debounced file paths into a Tokio task
+- reindexes supported-language files
+- removes deleted files from SQLite
 
-### Lifecycle
+### Active watcher model
 
-`watch_repository` stores a single watcher in `AppState`.
+`watch_repository` stores the watcher in `AppState.watcher`, which means the server keeps at most one active watcher at a time.
 
-Important current behavior:
+Current behavior:
 
-- only one watcher can be active at a time
-- starting a new watcher stops the previous one
-- `stop_watching` cancels and drops the active watcher
+- starting a watcher replaces the previous one
+- `stop_watching` cancels and drops the current watcher
+- dropping the watcher also cancels its task
 
-### Re-index path
+### Incremental reindex path
 
-When the watcher receives a file change:
+When a debounced change arrives:
 
-1. If the path no longer exists, remove its rows from SQLite
-2. If the file extension is unsupported, ignore it
-3. Otherwise call `index_single_file`
+1. if the path no longer exists, remove it from the index
+2. if the language is unsupported, ignore it
+3. otherwise call `index_single_file`
 
-`index_single_file` still hashes the file and skips writes if content has not changed, so watcher-triggered updates remain incremental.
+`index_single_file` still performs hash-based change detection, so a watcher event does not guarantee a write.
 
-## Semantic-search feature flag
+## Semantic search boundary
 
-Semantic search is compiled behind the Cargo feature:
+Semantic search is compiled only when the `semantic` feature is enabled:
 
 ```bash
---features semantic
+cargo run --features semantic
 ```
 
-### What changes when enabled
+When enabled:
 
-- `src/semantic` is compiled in
-- `AppState` includes an optional semantic engine handle
+- `src/semantic` is compiled
 - startup attempts to initialize `SemanticEngine`
-- the `semantic_search` tool can execute embedding-based similarity search
+- `AppState` may carry the engine
+- the `semantic_search` tool can query stored embeddings
 
-### Current semantic engine
-
-The implementation uses `fastembed` with:
-
-- model: `AllMiniLML6V2`
-
-`SemanticEngine::search`:
-
-1. embeds the query
-2. loads stored vectors from the `embeddings` table
-3. computes cosine similarity in-process
-4. sorts results by descending score
-5. returns the top `limit`
-
-### Important current boundary
-
-The semantic module includes `embed_and_store`, but semantic embedding generation is not wired into the normal repository indexing path in the current code. In other words:
-
-- the feature-gated engine and search path exist
-- the schema supports stored embeddings
-- embedding population is a clear integration point rather than part of the default indexing flow
-
-That distinction matters when reasoning about why `semantic_search` may be available but still have no indexed vectors to search.
+Important current boundary: the schema and engine support embeddings, but embedding generation is not part of the normal repository indexing path today. The semantic search path is present; embedding population is a separate integration step.
 
 ## Extension points
-
-The codebase has a few clear places for extension.
 
 ### Add or improve language support
 
 Primary files:
 
-- `src/indexer/languages.rs`
-- `languages/*.scm`
-- `src/indexer/parser.rs`
+- [`src/indexer/languages.rs`](../src/indexer/languages.rs)
+- [`languages/`](../languages/)
+- [`src/indexer/parser.rs`](../src/indexer/parser.rs)
 
-Typical steps:
+Typical work:
 
-1. add a tree-sitter grammar dependency in `Cargo.toml`
-2. register the language and extensions in `LanguageRegistry`
-3. add a query file in `languages/` for higher-quality extraction
-4. refine generic parsing only if query-based extraction is not enough
+1. add the tree-sitter grammar dependency
+2. register the language and extensions
+3. add or refine a query file for higher-fidelity extraction
+4. use the generic fallback only where queries are unavailable or insufficient
 
 ### Add a new MCP tool
 
 Primary files:
 
-- `src/tools/*.rs`
-- `src/server.rs`
+- [`src/tools/`](../src/tools/)
+- [`src/server.rs`](../src/server.rs)
 
-Typical steps:
+Typical work:
 
-1. add an argument type with `serde` + `schemars`
+1. define argument types with `serde` and `schemars`
 2. implement the handler
-3. register it on `CodeContextServer` with `#[tool(...)]`
+3. register it on `CodeContextServer`
 4. use `spawn_blocking` for synchronous database or indexing work
 
-### Extend the schema
+### Extend stored data
 
 Primary files:
 
-- `src/db/schema.rs`
-- `src/db/queries.rs`
+- [`src/db/schema.rs`](../src/db/schema.rs)
+- [`src/db/queries.rs`](../src/db/queries.rs)
 
-If you add new persisted relationships or metadata, update both schema creation and the query layer together.
+Update schema and query code together so persisted structure and runtime access stay aligned.
 
-### Improve semantic indexing
+### Change indexing behavior
 
 Primary files:
 
-- `src/semantic/mod.rs`
-- `src/indexer/mod.rs`
+- [`src/indexer/mod.rs`](../src/indexer/mod.rs)
+- [`src/indexer/walker.rs`](../src/indexer/walker.rs)
+- [`src/indexer/parser.rs`](../src/indexer/parser.rs)
+- [`src/watcher/mod.rs`](../src/watcher/mod.rs)
 
-The most obvious next step is to call semantic chunking and `embed_and_store` during indexing so semantic search stays in sync with the repository index.
-
-## Current operational characteristics
-
-These are helpful to keep in mind when modifying the system:
-
-- Database access is centralized through one `rusqlite::Connection`
-- File paths are stored relative to the indexed repository root
-- `find_definition`, `find_references`, and related tools query the persisted index rather than live files
-- Full-text search is backed by SQLite FTS5, while regex search scans stored file content in process
-- Project overview and file-summary tools are read-only views over indexed data
-
-## Related files
-
-- [`../README.md`](../README.md)
-- [`../src/main.rs`](../src/main.rs)
-- [`../src/server.rs`](../src/server.rs)
-- [`../src/db/schema.rs`](../src/db/schema.rs)
-- [`../src/indexer/mod.rs`](../src/indexer/mod.rs)
-- [`../src/watcher/mod.rs`](../src/watcher/mod.rs)
+These modules define the main ingestion path, so changes here affect both full indexing and watcher-driven updates.
