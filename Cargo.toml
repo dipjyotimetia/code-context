@@ -53,7 +53,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # File watching
 notify-debouncer-full = "0.4"
-notify = "7"
+notify = "8"
 
 # Semantic search (optional)
 fastembed = { version = "4", optional = true }
