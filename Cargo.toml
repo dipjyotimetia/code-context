@@ -56,7 +56,7 @@ notify-debouncer-full = "0.4"
 notify = "7"
 
 # Semantic search (optional)
-fastembed = { version = "4", optional = true }
+fastembed = { version = "5", optional = true }
 
 # Core utilities
 serde = { version = "1", features = ["derive"] }
