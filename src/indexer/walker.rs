@@ -29,10 +29,10 @@ pub fn walk_repository(root: &Path, registry: &LanguageRegistry) -> Vec<PathBuf>
         let path = entry.path();
 
         // Skip very large files (> 1 MB)
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.len() > 1_048_576 {
-                continue;
-            }
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.len() > 1_048_576
+        {
+            continue;
         }
 
         // Only include files whose extension maps to a known language
@@ -44,10 +44,10 @@ pub fn walk_repository(root: &Path, registry: &LanguageRegistry) -> Vec<PathBuf>
         if let Ok(mut f) = std::fs::File::open(path) {
             use std::io::Read;
             let mut buf = [0u8; 8192];
-            if let Ok(n) = f.read(&mut buf) {
-                if buf[..n].contains(&0) {
-                    continue;
-                }
+            if let Ok(n) = f.read(&mut buf)
+                && buf[..n].contains(&0)
+            {
+                continue;
             }
         }
 

@@ -42,9 +42,9 @@ fn extract_with_query(
 ) {
     let mut cursor = QueryCursor::new();
     let root = tree.root_node();
-    let mut matches = cursor.matches(query, root, source.as_bytes());
+    let matches = cursor.matches(query, root, source.as_bytes());
 
-    while let Some(m) = matches.next() {
+    for m in matches {
         for capture in m.captures {
             let idx = capture.index as usize;
             if idx >= query.capture_names().len() {
@@ -142,10 +142,10 @@ fn find_name_child(node: Node<'_>) -> Option<Node<'_>> {
     }
     // Try first identifier child
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            if child.kind() == "identifier" || child.kind() == "type_identifier" {
-                return Some(child);
-            }
+        if let Some(child) = node.child(i)
+            && (child.kind() == "identifier" || child.kind() == "type_identifier")
+        {
+            return Some(child);
         }
     }
     None

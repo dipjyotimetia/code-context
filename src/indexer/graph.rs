@@ -35,12 +35,10 @@ fn compute_scope_path(source: &str, node: Node<'_>) -> String {
             || kind.contains("method")
             || kind.contains("object");
 
-        if is_scope {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                let name = node_text(source, name_node);
-                if !name.is_empty() {
-                    parts.push(name);
-                }
+        if is_scope && let Some(name_node) = parent.child_by_field_name("name") {
+            let name = node_text(source, name_node);
+            if !name.is_empty() {
+                parts.push(name);
             }
         }
 
@@ -56,12 +54,13 @@ fn find_node_at(root: Node<'_>, byte_offset: usize) -> Option<Node<'_>> {
     loop {
         let mut found_child = false;
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                if child.start_byte() <= byte_offset && byte_offset < child.end_byte() {
-                    node = child;
-                    found_child = true;
-                    break;
-                }
+            if let Some(child) = node.child(i)
+                && child.start_byte() <= byte_offset
+                && byte_offset < child.end_byte()
+            {
+                node = child;
+                found_child = true;
+                break;
             }
         }
         if !found_child {

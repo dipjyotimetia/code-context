@@ -150,10 +150,10 @@ fn index_file_inner(
     let mut parse_result = parser::extract_symbols(&source, lang, registry);
 
     // Build scope paths via AST analysis
-    if let Some(mut parser) = registry.get_parser(lang) {
-        if let Some(tree) = parser.parse(source.as_bytes(), None) {
-            graph::build_scope_paths(&source, tree.root_node(), &mut parse_result.definitions);
-        }
+    if let Some(mut parser) = registry.get_parser(lang)
+        && let Some(tree) = parser.parse(source.as_bytes(), None)
+    {
+        graph::build_scope_paths(&source, tree.root_node(), &mut parse_result.definitions);
     }
 
     // Insert definitions (batch)

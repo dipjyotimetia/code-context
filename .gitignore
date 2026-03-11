@@ -1,1 +1,24 @@
+# Rust build output
 /target
+
+# Local database files
+/code_context.db
+/code_context.db-shm
+/code_context.db-wal
+
+# Environment overrides
+.env
+.env.*
+!.env.example
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS and transient files
+.DS_Store
+Thumbs.db
+*.log
