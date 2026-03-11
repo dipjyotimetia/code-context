@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rmcp::model::CallToolResult;
+use rmcp::model::{CallToolResult, Meta, ProgressNotificationParam};
+use rmcp::{Peer, RoleServer};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -18,6 +19,8 @@ pub struct IndexRepositoryArgs {
 pub async fn index_repository(
     state: &AppState,
     args: IndexRepositoryArgs,
+    peer: Peer<RoleServer>,
+    meta: Meta,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let root = PathBuf::from(&args.path);
 
@@ -39,12 +42,41 @@ pub async fn index_repository(
     let db = Arc::clone(&state.db);
     let registry = Arc::clone(&state.registry);
 
-    // Run indexing in a blocking task to avoid blocking the Tokio runtime
-    let result =
-        tokio::task::spawn_blocking(move || indexer::index_repository(&root, &db, &registry))
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("indexing error: {e}"), None))?;
+    // If the client supplied a progress token, set up a channel so the
+    // blocking indexing thread can send progress updates without calling
+    // block_on() from within spawn_blocking (which would panic).
+    let on_progress: Option<Box<dyn Fn(usize, usize) + Send>>;
+    if let Some(token) = meta.get_progress_token().map(|t| t.clone()) {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, usize)>(64);
+
+        // Async forwarder: reads from the channel and sends MCP progress
+        // notifications.  Terminates when the tx side drops (end of indexing).
+        tokio::spawn(async move {
+            while let Some((done, total)) = rx.recv().await {
+                let params = ProgressNotificationParam::new(token.clone(), done as f64)
+                    .with_total(total as f64)
+                    .with_message(format!("indexed {done}/{total} files"));
+                if let Err(e) = peer.notify_progress(params).await {
+                    tracing::debug!("progress notification error (non-fatal): {e}");
+                }
+            }
+        });
+
+        on_progress = Some(Box::new(move |done: usize, total: usize| {
+            // Non-blocking send — skip the notification if the channel is full
+            // rather than stalling the indexing thread.
+            let _ = tx.try_send((done, total));
+        }));
+    } else {
+        on_progress = None;
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        indexer::index_repository(&root, &db, &registry, on_progress.as_deref())
+    })
+    .await
+    .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
+    .map_err(|e| rmcp::ErrorData::internal_error(format!("indexing error: {e}"), None))?;
 
     let summary = format!(
         "Indexed {} files ({} skipped), found {} symbols and {} references. {} errors.",

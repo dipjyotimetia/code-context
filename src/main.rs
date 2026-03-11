@@ -1,6 +1,7 @@
 mod db;
 mod indexer;
 mod prompts;
+mod resources;
 #[cfg(feature = "semantic")]
 mod semantic;
 mod server;

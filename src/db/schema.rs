@@ -1,10 +1,15 @@
 use rusqlite::Connection;
 
-pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
+/// Called by r2d2 on every new connection from the pool.
+/// Sets the per-connection PRAGMAs required for correctness and performance.
+pub fn configure_connection(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    Ok(())
+}
 
+pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS schema_version (
@@ -93,6 +98,20 @@ pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             content='',
             contentless_delete=1
         );
+        ",
+    )?;
+
+    // Trigger: keep the FTS index in sync when a file row is deleted.
+    // This fires even on cascade-deletes triggered from other tables and
+    // protects against orphaned FTS entries if application-level cleanup
+    // is skipped (e.g., after a crash mid-transaction).
+    conn.execute_batch(
+        "
+        CREATE TRIGGER IF NOT EXISTS fts_files_delete
+        AFTER DELETE ON files
+        BEGIN
+            DELETE FROM code_fts WHERE rowid = OLD.id;
+        END;
         ",
     )?;
 

@@ -50,10 +50,12 @@ tree-sitter-md = "0.5"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 
 # File watching
 notify-debouncer-full = "0.4"
-notify = "8"
+notify = "7"
 
 # Semantic search (optional)
 fastembed = { version = "5", optional = true }

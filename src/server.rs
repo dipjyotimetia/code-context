@@ -1,14 +1,19 @@
 use rmcp::{
-    ServerHandler,
+    Peer, RoleServer, ServerHandler,
     handler::server::{
         router::{prompt::PromptRouter, tool::ToolRouter},
         wrapper::Parameters,
     },
-    model::{CallToolResult, GetPromptResult, ServerCapabilities, ServerInfo},
+    model::{
+        CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo, GetPromptResult,
+        ListResourceTemplatesResult, ListResourcesResult, Meta, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
+    },
     prompt, prompt_router, tool, tool_router,
 };
 
 use crate::prompts;
+use crate::resources;
 use crate::state::AppState;
 use crate::tools::{context, graph, indexing, navigate, search};
 
@@ -44,8 +49,10 @@ impl CodeContextServer {
     async fn index_repository(
         &self,
         Parameters(args): Parameters<indexing::IndexRepositoryArgs>,
+        peer: Peer<RoleServer>,
+        meta: Meta,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        indexing::index_repository(&self.state, args).await
+        indexing::index_repository(&self.state, args, peer, meta).await
     }
 
     #[tool(
@@ -359,6 +366,8 @@ impl ServerHandler for CodeContextServer {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_prompts()
+                .enable_resources()
+                .enable_completions()
                 .build(),
         )
         .with_instructions(SERVER_INSTRUCTIONS)
@@ -366,5 +375,96 @@ impl ServerHandler for CodeContextServer {
             "code-context",
             env!("CARGO_PKG_VERSION"),
         ))
+    }
+
+    // ── Resources ────────────────────────────────────────────────────────────
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, rmcp::ErrorData>> + Send + '_
+    {
+        let resources = resources::static_resources();
+        async move {
+            Ok(ListResourcesResult {
+                resources,
+                next_cursor: None,
+                meta: None,
+            })
+        }
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, rmcp::ErrorData>>
+           + Send
+           + '_ {
+        let resource_templates = resources::resource_templates();
+        async move {
+            Ok(ListResourceTemplatesResult {
+                resource_templates,
+                next_cursor: None,
+                meta: None,
+            })
+        }
+    }
+
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, rmcp::ErrorData>> + Send + '_
+    {
+        let db = std::sync::Arc::clone(&self.state.db);
+        async move { resources::read_resource(&db, request) }
+    }
+
+    // ── Completions ──────────────────────────────────────────────────────────
+
+    fn complete(
+        &self,
+        request: CompleteRequestParams,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CompleteResult, rmcp::ErrorData>> + Send + '_ {
+        let db = std::sync::Arc::clone(&self.state.db);
+        async move {
+            let prefix = request.argument.value.as_str();
+            let arg_name = request.argument.name.as_str();
+
+            // Determine completion kind from the argument name
+            let values: Vec<String> = match arg_name {
+                // Symbol name completions
+                "symbol_name" | "name" => db
+                    .with_conn(|conn| {
+                        crate::db::queries::symbol_names_by_prefix(conn, prefix, 20)
+                            .map_err(Into::into)
+                    })
+                    .unwrap_or_default(),
+
+                // File path completions
+                "path" | "file_hint" | "file_path" => db
+                    .with_conn(|conn| {
+                        crate::db::queries::file_paths_by_prefix(conn, prefix, 20)
+                            .map_err(Into::into)
+                    })
+                    .unwrap_or_default(),
+
+                // Static language completions
+                "language" => crate::indexer::languages::LanguageRegistry::static_language_names()
+                    .into_iter()
+                    .filter(|l| l.starts_with(prefix))
+                    .map(|s| s.to_string())
+                    .collect(),
+
+                _ => vec![],
+            };
+
+            let completion =
+                CompletionInfo::with_all_values(values).unwrap_or_default();
+            Ok(CompleteResult::new(completion))
+        }
     }
 }

@@ -21,11 +21,12 @@ pub struct IndexResult {
     pub errors: usize,
 }
 
-#[instrument(skip(db, registry), fields(root = %root.display()))]
+#[instrument(skip(db, registry, on_progress), fields(root = %root.display()))]
 pub fn index_repository(
     root: &Path,
     db: &Database,
     registry: &LanguageRegistry,
+    on_progress: Option<&(dyn Fn(usize, usize) + Send)>,
 ) -> anyhow::Result<IndexResult> {
     let files = walker::walk_repository(root, registry);
     let total = files.len();
@@ -57,8 +58,9 @@ pub fn index_repository(
         })?;
 
         let done = result.files_indexed + result.files_skipped + result.errors;
-        if done % BATCH_SIZE == 0 {
-            debug!(progress = done, total, "indexing progress");
+        debug!(progress = done, total, "indexing progress");
+        if let Some(cb) = on_progress {
+            cb(done, total);
         }
     }
 

@@ -152,33 +152,22 @@ pub fn upsert_content(conn: &Connection, file_id: i64, content: &str) -> rusqlit
 pub fn upsert_fts(
     conn: &Connection,
     file_id: i64,
-    _file_path: &str, // No longer stored in FTS, fetched via JOIN
+    _file_path: &str,
     symbol_names: &str,
     content: &str,
-    _language: &str, // No longer stored in FTS, fetched via JOIN
+    _language: &str,
 ) -> rusqlite::Result<()> {
-    // If using completely external content, FTS5 updates automatically via triggers
-    // However, if we're passing symbol_names we might still need to update the FTS table explicitly
-    // for the non-external columns if we hadn't set them up perfectly in triggers.
-    // Let's rethink. If FTS table has `content='files_content'`, the columns must match `files_content`.
-    // Actually, `files_content` only has `file_id` and `content`.
-    // It is simpler to revert to the `contentless_delete=1` table but without `file_path` and `language`
-    // inside the FTS table, and rely entirely on the JOIN. Let's do that.
-
-    // For now we'll just fix the insert statement to match whatever the schema expects.
+    // Always delete the existing FTS row first so we never have a stale or
+    // duplicate entry.  contentless_delete=1 makes this a metadata-only
+    // operation — the FTS index is updated without needing the original text.
+    // The database-level trigger (fts_files_delete) provides a second line of
+    // defence, but explicit cleanup here keeps the happy path clean.
+    conn.execute("DELETE FROM code_fts WHERE rowid = ?1", params![file_id])?;
     conn.execute(
         "INSERT INTO code_fts (rowid, symbol_names, content)
          VALUES (?1, ?2, ?3)",
         params![file_id, symbol_names, content],
-    )
-    .or_else(|_| {
-        conn.execute("DELETE FROM code_fts WHERE rowid = ?1", params![file_id])?;
-        conn.execute(
-            "INSERT INTO code_fts (rowid, symbol_names, content)
-             VALUES (?1, ?2, ?3)",
-            params![file_id, symbol_names, content],
-        )
-    })?;
+    )?;
     Ok(())
 }
 
@@ -686,6 +675,57 @@ fn map_reference(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReferenceLocation>
         kind: row.get(2)?,
         start_line: row.get(3)?,
     })
+}
+
+// ── Completion & integrity helpers ──────────────────────────────────────────
+
+/// Return up to `limit` symbol names whose name begins with `prefix`.
+/// Used by the MCP completions handler to provide argument autocomplete.
+pub fn symbol_names_by_prefix(
+    conn: &Connection,
+    prefix: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let pattern = format!("{}%", prefix);
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT name FROM symbols WHERE name LIKE ?1 ORDER BY name LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![pattern, limit as u32], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(rows)
+}
+
+/// Return up to `limit` file paths that begin with `prefix`.
+/// Used by the MCP completions handler to provide path argument autocomplete.
+pub fn file_paths_by_prefix(
+    conn: &Connection,
+    prefix: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let pattern = format!("{}%", prefix);
+    let mut stmt = conn.prepare(
+        "SELECT path FROM files WHERE path LIKE ?1 ORDER BY path LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![pattern, limit as u32], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(rows)
+}
+
+/// Return the count of indexed files that have no matching FTS entry.
+///
+/// A non-zero count indicates that the FTS index has drifted from the `files`
+/// table, which should not happen under normal operation.  Used by
+/// `get_project_overview` to surface data-integrity information.
+#[allow(dead_code)]
+pub fn fts_orphan_count(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM files f LEFT JOIN code_fts ON code_fts.rowid = f.id
+         WHERE code_fts.rowid IS NULL",
+        [],
+        |row| row.get(0),
+    )
 }
 
 #[cfg(test)]

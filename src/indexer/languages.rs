@@ -50,6 +50,15 @@ impl LanguageRegistry {
         langs
     }
 
+    /// Static list of language names for completions (no instance needed).
+    pub fn static_language_names() -> &'static [&'static str] {
+        &[
+            "bash", "c", "cpp", "csharp", "css", "go", "hcl", "html", "java",
+            "javascript", "json", "kotlin", "markdown", "php", "python", "ruby",
+            "rust", "scala", "swift", "toml", "typescript", "yaml",
+        ]
+    }
+
     fn register(&mut self, entry: LanguageEntry) {
         for ext in entry.extensions {
             self.ext_map.insert(ext, entry.name);
