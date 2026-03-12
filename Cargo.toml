@@ -72,3 +72,4 @@ ignore = "0.4"
 regex = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

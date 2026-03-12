@@ -5,11 +5,14 @@ use rmcp::{
         wrapper::Parameters,
     },
     model::{
-        CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo, GetPromptResult,
-        ListResourceTemplatesResult, ListResourcesResult, Meta, PaginatedRequestParams,
-        ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
+        CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo, GetPromptRequestParams,
+        GetPromptResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, Meta,
+        PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
+        ServerInfo,
     },
-    prompt, prompt_router, tool, tool_router,
+    prompt, prompt_handler, prompt_router,
+    service::RequestContext,
+    tool, tool_handler, tool_router,
 };
 
 use crate::prompts;
@@ -360,6 +363,8 @@ Use prompts for guided multi-step workflows:
 - `find_usage_patterns` — Discover how APIs are used
 "#;
 
+#[tool_handler]
+#[prompt_handler]
 impl ServerHandler for CodeContextServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
