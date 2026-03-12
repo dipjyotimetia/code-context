@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -119,17 +119,11 @@ pub async fn get_call_graph(
                 let defs = queries::find_definitions(conn, &current, None)?;
 
                 for def in &defs {
-                    // Find what this symbol's body references
-                    let file_symbols = queries::get_file_symbols(conn, &def.file_path)?;
-
-                    // Get refs in the same file that fall within this symbol's line range
-                    let refs = queries::find_references(conn, &current, Some(&def.file_path), 100)?;
-                    let _ = refs; // We use the inverse: find what this definition calls
+                    let mut symbols_by_file: HashMap<String, Vec<queries::SymbolInfo>> =
+                        HashMap::new();
 
                     // Get all references FROM the file, within the definition's line range
-                    let all_refs_in_file =
-                        queries::find_references(conn, "%", Some(&def.file_path), 500)
-                            .unwrap_or_default();
+                    let all_refs_in_file = queries::get_file_references(conn, &def.file_path, 500)?;
 
                     for r in &all_refs_in_file {
                         if r.start_line >= def.start_line
@@ -151,9 +145,17 @@ pub async fn get_call_graph(
                     let callers = queries::find_references(conn, &current, None, 50)?;
                     for caller in &callers {
                         // Find which symbol contains this reference
+                        let file_symbols =
+                            if let Some(symbols) = symbols_by_file.get(&caller.file_path) {
+                                symbols.clone()
+                            } else {
+                                let symbols = queries::get_file_symbols(conn, &caller.file_path)?;
+                                symbols_by_file.insert(caller.file_path.clone(), symbols.clone());
+                                symbols
+                            };
+
                         for fs in &file_symbols {
-                            if caller.file_path == def.file_path
-                                && caller.start_line >= fs.start_line
+                            if caller.start_line >= fs.start_line
                                 && caller.start_line <= fs.end_line
                                 && fs.name != current
                             {
@@ -162,6 +164,7 @@ pub async fn get_call_graph(
                                     fs.name.clone(),
                                     current.clone(),
                                 ));
+                                break;
                             }
                         }
                     }

@@ -20,6 +20,16 @@ use indexer::languages::LanguageRegistry;
 use server::CodeContextServer;
 use state::AppState;
 
+fn env_bool(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(value) => matches!(
+            value.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => default,
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
@@ -70,8 +80,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the MCP StreamableHttp service
     let config = StreamableHttpServerConfig {
-        stateful_mode: true,
-        json_response: false,
+        stateful_mode: env_bool("MCP_STATEFUL_MODE", true),
+        json_response: env_bool("MCP_JSON_RESPONSE", false),
         sse_keep_alive: None,
         cancellation_token: ct.child_token(),
         ..Default::default()

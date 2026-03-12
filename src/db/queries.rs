@@ -316,6 +316,28 @@ pub fn get_file_symbols(conn: &Connection, file_path: &str) -> rusqlite::Result<
     Ok(results)
 }
 
+pub fn get_file_references(
+    conn: &Connection,
+    file_path: &str,
+    limit: u32,
+) -> rusqlite::Result<Vec<ReferenceLocation>> {
+    let mut stmt = conn.prepare(
+        "SELECT f.path, r.symbol_name, r.kind, r.start_line
+         FROM refs r JOIN files f ON r.file_id = f.id
+         WHERE f.path = ?1
+         ORDER BY r.start_line
+         LIMIT ?2",
+    )?;
+
+    let rows = stmt.query_map(params![file_path, limit], map_reference)?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row?);
+    }
+    Ok(results)
+}
+
 pub fn get_file_content(conn: &Connection, file_path: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row(
         "SELECT fc.content FROM files_content fc

@@ -93,11 +93,19 @@ Useful Make targets:
 | `PORT` | `3001` | Bind port |
 | `DATABASE_PATH` | `code_context.db` | SQLite database path |
 | `RUST_LOG` | `info` fallback | Tracing filter |
+| `MCP_STATEFUL_MODE` | `true` | Use stateful SSE sessions (`initialize` + `Mcp-Session-Id`) |
+| `MCP_JSON_RESPONSE` | `false` | When `MCP_STATEFUL_MODE=false`, return JSON instead of SSE |
 
 Example:
 
 ```bash
 HOST=0.0.0.0 PORT=4000 DATABASE_PATH=.data/code-context.db RUST_LOG=debug cargo run
+```
+
+Stateless JSON example:
+
+```bash
+MCP_STATEFUL_MODE=false MCP_JSON_RESPONSE=true cargo run
 ```
 
 ## MCP tools
