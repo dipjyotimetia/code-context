@@ -1,12 +1,88 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::Path;
 use std::sync::Arc;
 
 use rmcp::model::CallToolResult;
+use rusqlite::params_from_iter;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::db::queries;
 use crate::state::AppState;
+
+fn normalize_import_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn import_candidates(file_path: &str) -> Vec<String> {
+    let mut candidates = BTreeSet::new();
+    let normalized = normalize_import_path(file_path);
+    let trimmed = normalized.strip_prefix("./").unwrap_or(&normalized);
+    candidates.insert(trimmed.to_string());
+
+    let path = Path::new(trimmed);
+    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+        candidates.insert(file_name.to_string());
+    }
+
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        candidates.insert(stem.to_string());
+        if let Some(parent) = path.parent().and_then(|p| p.to_str()) {
+            let parent = parent.trim_end_matches('/');
+            if !parent.is_empty() {
+                candidates.insert(format!("{parent}/{stem}"));
+            }
+        }
+    }
+
+    if let Some(stripped) = trimmed.strip_suffix("/mod.rs") {
+        candidates.insert(stripped.to_string());
+        if let Some(mod_name) = stripped.rsplit('/').next()
+            && !mod_name.is_empty()
+        {
+            candidates.insert(mod_name.to_string());
+        }
+    }
+
+    candidates.into_iter().collect()
+}
+
+fn importers_for_path(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let exact = conn
+        .prepare(
+            "SELECT DISTINCT f.path FROM imports i
+             JOIN files f ON i.file_id = f.id
+             WHERE i.source_path = ?1",
+        )?
+        .query_map(rusqlite::params![file_path], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !exact.is_empty() {
+        return Ok(exact);
+    }
+
+    let candidates = import_candidates(file_path);
+    if candidates.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let placeholders = std::iter::repeat_n("?", candidates.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT DISTINCT f.path FROM imports i
+         JOIN files f ON i.file_id = f.id
+         WHERE i.source_path IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_from_iter(candidates.iter()), |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
 
 // ── Call graph tool ─────────────────────────────────────────────────
 
@@ -172,15 +248,7 @@ pub async fn get_dependency_tree(
                     result.insert(current, deps);
                 } else {
                     // What imports this file? (reverse lookup)
-                    let mut stmt = conn.prepare(
-                        "SELECT DISTINCT f.path FROM imports i
-                         JOIN files f ON i.file_id = f.id
-                         WHERE i.source_path LIKE ?1",
-                    )?;
-                    let pattern = format!("%{current}%");
-                    let importers: Vec<String> = stmt
-                        .query_map(rusqlite::params![pattern], |row| row.get(0))?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    let importers = importers_for_path(conn, &current)?;
                     for imp in &importers {
                         if !visited.contains(imp) {
                             queue.push_back((imp.clone(), depth + 1));

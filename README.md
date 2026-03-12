@@ -42,6 +42,12 @@ cargo run
 
 By default, the server is available at `http://127.0.0.1:3001/mcp`.
 
+If you're writing a custom MCP client (stateful SSE), the required handshake is:
+
+1. Send `initialize` and read the `Mcp-Session-Id` response header.
+2. Send `notifications/initialized` with that `Mcp-Session-Id`.
+3. Include `Mcp-Session-Id` on all subsequent requests (`tools/list`, `tools/call`, `prompts/list`, `prompts/get`, etc.).
+
 Index a repository:
 
 ```text

@@ -122,29 +122,29 @@ Persist repository data in SQLite and use FTS5 for full-text search.
 - If repositories or query volume outgrow a single local database comfortably.
 - If search requirements exceed what FTS5 can provide with acceptable complexity.
 
-## Decision 5: keep one guarded SQLite connection
+## Decision 5: use a small SQLite connection pool
 
 **Decision**  
-Wrap one `rusqlite::Connection` in a `Mutex` and serialize database access inside the process.
+Use an r2d2 pool of `rusqlite::Connection` objects instead of a single guarded connection.
 
 **Rationale**
 
-- It keeps the persistence layer simple and predictable.
-- Transaction ownership is easy to reason about.
-- It avoids introducing a connection pool around a synchronous SQLite driver.
-- It matches the current scale and deployment model of a local MCP server.
+- SQLite in WAL mode supports multiple concurrent readers.
+- A small pool lets read-heavy tools (search, navigation, context) run in parallel.
+- It keeps the API surface simple (`with_conn`, `with_tx`) while avoiding a single mutex bottleneck.
+- It still fits the local-first deployment model.
 
 **Tradeoffs**
 
-- Database access is serialized even when tool handlers run concurrently.
-- Long-running reads or writes can delay other operations.
-- This can become a bottleneck if indexing and query traffic overlap heavily.
+- More connections increase SQLite resource usage and open file handles.
+- Write operations still serialize at the database level, so parallelism is limited under heavy write load.
+- Pool configuration becomes another tuning knob (max size, idle connections, timeouts).
 
 **When to revisit**
 
-- If profiling shows the mutex around the connection is a sustained bottleneck.
-- If concurrent workloads become a primary use case.
-- If the storage layer moves toward a different database or a different SQLite access strategy.
+- If connection churn or file-handle limits become an issue.
+- If write-heavy workloads dominate and pooling no longer helps.
+- If the storage layer moves toward a different database or async-native access.
 
 ## Decision 6: use `spawn_blocking` around synchronous work
 

@@ -13,7 +13,7 @@ fn parse_sse_messages(body: &str) -> Vec<Value> {
         if data.is_empty() {
             continue;
         }
-        if !data.starts_with({) {
+        if !data.starts_with('{') {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(data) {
@@ -123,7 +123,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .unwrap_or_default();
     require(
-        tools.iter().any(|t| t.get("name") == Some(&Value::String("index_repository".into()))),
+        tools
+            .iter()
+            .any(|t| t.get("name") == Some(&Value::String("index_repository".into()))),
         "index_repository missing from tools/list",
     )?;
 

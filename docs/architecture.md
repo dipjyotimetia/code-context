@@ -95,12 +95,12 @@ Handlers mostly validate arguments, clone shared state, and offload synchronous 
 
 ### Database layer
 
-[`src/db/mod.rs`](../src/db/mod.rs) wraps a single `rusqlite::Connection` in a `Mutex`.
+[`src/db/mod.rs`](../src/db/mod.rs) uses an r2d2 pool of `rusqlite::Connection` objects.
 
 That means:
 
 - reads and writes are persisted in one local SQLite database
-- database access is serialized inside this process
+- read-heavy workloads can run concurrently across pooled connections
 - call sites use `with_conn` or `with_tx` to keep transaction handling consistent
 
 Schema creation lives in [`src/db/schema.rs`](../src/db/schema.rs), and query logic lives in [`src/db/queries.rs`](../src/db/queries.rs).
