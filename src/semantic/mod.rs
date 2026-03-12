@@ -23,10 +23,11 @@ impl SemanticEngine {
     }
 
     pub fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let embeddings = self.model.embed(texts.to_vec(), None)?;
+        let embeddings = self.model.embed(texts, None)?;
         Ok(embeddings)
     }
 
+    #[allow(dead_code)]
     pub async fn embed_and_store(
         &mut self,
         file_path: &str,
