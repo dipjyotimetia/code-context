@@ -40,6 +40,19 @@ flowchart LR
 cargo run
 ```
 
+Install from crates.io:
+
+```bash
+cargo install code-context
+```
+
+Install a prebuilt binary from GitHub Releases:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dipjyotimetia/code-context/releases/latest/download/code-context-installer.sh | sh
+```
+
 By default, the server is available at `http://127.0.0.1:3001/mcp`.
 
 If you're writing a custom MCP client (stateful SSE), the required handshake is:
@@ -127,6 +140,18 @@ make check
 make test
 make run
 ```
+
+## Release process
+
+Releases are automated in two stages:
+
+- `release-plz` runs on `main`, opens or updates a release PR, and publishes the crate plus GitHub Release when that PR is merged.
+- `cargo-dist` runs in the same release workflow after a crate release is created and attaches packaged binaries, checksums, and install scripts for supported platforms.
+
+Required repository setup:
+
+- Configure crates.io trusted publishing for this repository so the `Release Plz` workflow can publish without a long-lived registry token.
+- In repository Actions settings, allow GitHub Actions to create and approve pull requests so `release-plz` can maintain the release PR.
 
 ## Documentation
 
