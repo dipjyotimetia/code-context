@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "MCP server providing deep codebase context via tree-sitter indexing"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/dipjyotimetia/code-context"
+keywords = ["mcp", "tree-sitter", "code-search", "indexer"]
+categories = ["command-line-utilities", "development-tools"]
 
 [features]
 default = []

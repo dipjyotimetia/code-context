@@ -215,14 +215,24 @@ pub async fn get_project_overview(state: &AppState) -> Result<CallToolResult, rm
     .map_err(|e| rmcp::ErrorData::internal_error(format!("task join error: {e}"), None))?
     .map_err(|e| rmcp::ErrorData::internal_error(format!("stats error: {e}"), None))?;
 
+    // Report watcher status without holding the lock for longer than needed.
+    let watcher_status = {
+        let guard = state.watcher.lock().await;
+        match &*guard {
+            Some(w) => format!("active (watching {})", w.root().display()),
+            None => "inactive — call watch_repository to keep index current".to_string(),
+        }
+    };
+
     let mut output = String::from("# Project Overview\n\n");
     output.push_str(&format!("- **Total files:** {}\n", stats.total_files));
     output.push_str(&format!("- **Total symbols:** {}\n", stats.total_symbols));
     output.push_str(&format!("- **Total references:** {}\n", stats.total_refs));
     output.push_str(&format!(
-        "- **Total size:** {:.1} KB\n\n",
+        "- **Total size:** {:.1} KB\n",
         stats.total_size_bytes as f64 / 1024.0,
     ));
+    output.push_str(&format!("- **File watcher:** {}\n\n", watcher_status));
 
     if !stats.languages.is_empty() {
         output.push_str("## Languages\n\n");

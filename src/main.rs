@@ -50,6 +50,19 @@ async fn main() -> anyhow::Result<()> {
     let db = Database::init(std::path::Path::new(&db_path))?;
     tracing::info!(path = %db_path, "database initialized");
 
+    // Warn on startup if the FTS index has drifted from the files table.
+    // This can happen if a previous process was killed mid-transaction.
+    if let Ok(orphans) =
+        db.with_conn(|conn| crate::db::queries::fts_orphan_count(conn).map_err(anyhow::Error::from))
+        && orphans > 0
+    {
+        tracing::warn!(
+            orphans,
+            "FTS index has orphaned entries (files table ahead of code_fts); \
+             consider re-running index_repository to repair"
+        );
+    }
+
     // Initialize language registry
     let registry = LanguageRegistry::new();
     tracing::info!(
