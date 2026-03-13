@@ -100,7 +100,15 @@ pub fn upsert_file(
            indexed_at = datetime('now')",
         params![path, content_hash, language, size_bytes],
     )?;
-    Ok(conn.last_insert_rowid())
+    // `last_insert_rowid()` is only set on a genuine INSERT; on an UPDATE
+    // conflict path it may return 0 or a stale id from a prior operation on
+    // this connection.  Always resolve via a SELECT so downstream symbol/ref
+    // inserts use the correct file id.
+    conn.query_row(
+        "SELECT id FROM files WHERE path = ?1",
+        params![path],
+        |row| row.get(0),
+    )
 }
 
 pub fn get_file_id(conn: &Connection, path: &str) -> rusqlite::Result<Option<i64>> {

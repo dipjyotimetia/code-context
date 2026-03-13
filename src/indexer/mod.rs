@@ -82,7 +82,10 @@ pub fn index_single_file(
     db: &Database,
     registry: &LanguageRegistry,
 ) -> anyhow::Result<()> {
-    db.with_conn(|conn| {
+    // Use a transaction so that the delete + re-insert pair is atomic.
+    // Without this, a crash or error between the two steps leaves the file
+    // permanently absent from the index.
+    db.with_tx(|conn| {
         let rel = make_relative(path, root);
 
         // Delete old data for this file
