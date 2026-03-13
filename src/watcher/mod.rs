@@ -57,7 +57,9 @@ impl FileWatcher {
                             // Log a warning when the channel is full so that index
                             // staleness is visible rather than silently occurring.
                             if tx.try_send(paths).is_err() {
-                                warn!("watcher channel full — file-change events dropped; index may be stale");
+                                warn!(
+                                    "watcher channel full — file-change events dropped; index may be stale"
+                                );
                             }
                         }
                     }
