@@ -115,6 +115,7 @@ pub async fn get_symbol_context(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     super::require_non_empty(&args.symbol, "symbol")?;
 
+    // Cap at 50 to prevent excessively large responses
     let ctx_lines = args.context_lines.unwrap_or(15).min(50);
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();

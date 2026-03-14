@@ -119,6 +119,7 @@ pub async fn find_references(
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();
     let file_hint = args.file_hint.clone();
+    // Cap at 100 for consistency with other search/list tools
     let limit = args.limit.unwrap_or(30).min(100);
 
     let references = tokio::task::spawn_blocking(move || {
