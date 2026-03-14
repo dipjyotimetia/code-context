@@ -28,6 +28,8 @@ pub async fn search_code(
     state: &AppState,
     args: SearchCodeArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.query, "query")?;
+
     let db = state.db.clone();
     let query = args.query.clone();
     let language = args.language.clone();
@@ -91,6 +93,8 @@ pub async fn search_symbols(
     state: &AppState,
     args: SearchSymbolsArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.name, "name")?;
+
     let db = state.db.clone();
     let name = args.name.clone();
     let kind = args.kind.clone();
@@ -226,6 +230,17 @@ pub async fn search_by_regex(
     state: &AppState,
     args: SearchByRegexArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.pattern, "pattern")?;
+
+    // Validate the regex pattern upfront so the user gets a clear error
+    // instead of a generic database/internal error.
+    if let Err(e) = regex::Regex::new(&args.pattern) {
+        return Err(rmcp::ErrorData::invalid_params(
+            format!("invalid regex pattern: {e}"),
+            None,
+        ));
+    }
+
     let db = state.db.clone();
     let pattern = args.pattern.clone();
     let language = args.language.clone();
@@ -418,5 +433,59 @@ mod tests {
         let text = format!("{:?}", result.content[0]);
         assert!(text.contains("Found 1 regex matches for '^fn test.*'"));
         assert!(text.contains("src/main.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_search_code_empty_query_rejected() {
+        let state = setup_state().await;
+        let args = SearchCodeArgs {
+            query: "  ".to_string(),
+            language: None,
+            limit: None,
+            offset: None,
+        };
+        let result = search_code(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_search_symbols_empty_name_rejected() {
+        let state = setup_state().await;
+        let args = SearchSymbolsArgs {
+            name: "".to_string(),
+            kind: None,
+            language: None,
+            limit: None,
+        };
+        let result = search_symbols(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_search_by_regex_invalid_pattern() {
+        let state = setup_state().await;
+        let args = SearchByRegexArgs {
+            pattern: "[invalid".to_string(),
+            language: None,
+            limit: None,
+        };
+        let result = search_by_regex(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("invalid regex pattern"));
+    }
+
+    #[tokio::test]
+    async fn test_search_by_regex_empty_pattern_rejected() {
+        let state = setup_state().await;
+        let args = SearchByRegexArgs {
+            pattern: "".to_string(),
+            language: None,
+            limit: None,
+        };
+        let result = search_by_regex(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
     }
 }
