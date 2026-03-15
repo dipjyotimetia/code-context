@@ -126,10 +126,7 @@ fn read_overview(db: &Arc<Database>) -> Result<ReadResourceResult, McpError> {
 
 fn read_file(db: &Arc<Database>, path: &str) -> Result<ReadResourceResult, McpError> {
     // Reject path traversal attempts — check for encoded variants too
-    if path.contains("..")
-        || path.starts_with('/')
-        || path.starts_with('\\')
-        || path.contains('\0')
+    if path.contains("..") || path.starts_with('/') || path.starts_with('\\') || path.contains('\0')
     {
         return Err(McpError::invalid_params("path traversal not allowed", None));
     }

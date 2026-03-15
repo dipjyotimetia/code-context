@@ -111,9 +111,7 @@ async fn main() -> anyhow::Result<()> {
     let router = axum::Router::new()
         .route(
             "/health",
-            axum::routing::get(|| async {
-                axum::http::StatusCode::OK
-            }),
+            axum::routing::get(|| async { axum::http::StatusCode::OK }),
         )
         .nest_service("/mcp", service);
 

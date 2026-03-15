@@ -228,9 +228,7 @@ pub async fn get_dependency_tree(
 
     if direction != "imports" && direction != "importers" {
         return Err(rmcp::ErrorData::invalid_params(
-            format!(
-                "invalid direction '{direction}': must be 'imports' or 'importers'"
-            ),
+            format!("invalid direction '{direction}': must be 'imports' or 'importers'"),
             None,
         ));
     }
@@ -479,10 +477,12 @@ mod tests {
         };
         let result = get_dependency_tree(&state, args).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .message
-            .contains("must be 'imports' or 'importers'"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("must be 'imports' or 'importers'")
+        );
     }
 
     #[tokio::test]

@@ -473,7 +473,12 @@ mod tests {
         };
         let result = search_by_regex(&state, args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("invalid regex pattern"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("invalid regex pattern")
+        );
     }
 
     #[tokio::test]
