@@ -107,8 +107,13 @@ async fn main() -> anyhow::Result<()> {
             config,
         );
 
-    // Build axum router
-    let router = axum::Router::new().nest_service("/mcp", service);
+    // Build axum router with health-check endpoint for monitoring / load-balancers
+    let router = axum::Router::new()
+        .route(
+            "/health",
+            axum::routing::get(|| async { axum::http::StatusCode::OK }),
+        )
+        .nest_service("/mcp", service);
 
     // Bind and serve
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

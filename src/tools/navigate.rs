@@ -19,6 +19,8 @@ pub async fn find_definition(
     state: &AppState,
     args: FindDefinitionArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.symbol, "symbol")?;
+
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();
     let file_hint = args.file_hint.clone();
@@ -112,10 +114,13 @@ pub async fn find_references(
     state: &AppState,
     args: FindReferencesArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.symbol, "symbol")?;
+
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();
     let file_hint = args.file_hint.clone();
-    let limit = args.limit.unwrap_or(30);
+    // Cap at 100 for consistency with other search/list tools
+    let limit = args.limit.unwrap_or(30).min(100);
 
     let references = tokio::task::spawn_blocking(move || {
         db.with_conn(|conn| {
@@ -203,6 +208,8 @@ pub async fn get_imports(
     state: &AppState,
     args: GetImportsArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.file_path, "file_path")?;
+
     let db = Arc::clone(&state.db);
     let file_path = args.file_path.clone();
 
@@ -378,5 +385,41 @@ mod tests {
         let text = format!("{:?}", result.content[0]);
         assert!(text.contains("Imports in 'src/main.rs'"));
         assert!(text.contains("std::collections::HashMap"));
+    }
+
+    #[tokio::test]
+    async fn test_find_definition_empty_symbol_rejected() {
+        let state = setup_state().await;
+        let args = FindDefinitionArgs {
+            symbol: "".to_string(),
+            file_hint: None,
+        };
+        let result = find_definition(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_find_references_empty_symbol_rejected() {
+        let state = setup_state().await;
+        let args = FindReferencesArgs {
+            symbol: " ".to_string(),
+            file_hint: None,
+            limit: None,
+        };
+        let result = find_references(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_get_imports_empty_path_rejected() {
+        let state = setup_state().await;
+        let args = GetImportsArgs {
+            file_path: "".to_string(),
+        };
+        let result = get_imports(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
     }
 }

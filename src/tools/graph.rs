@@ -98,6 +98,8 @@ pub async fn get_call_graph(
     state: &AppState,
     args: GetCallGraphArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.symbol, "symbol")?;
+
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();
     let max_depth = args.depth.unwrap_or(2).min(5);
@@ -217,13 +219,23 @@ pub async fn get_dependency_tree(
     state: &AppState,
     args: GetDependencyTreeArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
-    let db = Arc::clone(&state.db);
-    let file_path = args.file_path.clone();
-    let max_depth = args.depth.unwrap_or(3).min(10);
+    super::require_non_empty(&args.file_path, "file_path")?;
+
     let direction = args
         .direction
         .clone()
         .unwrap_or_else(|| "imports".to_string());
+
+    if direction != "imports" && direction != "importers" {
+        return Err(rmcp::ErrorData::invalid_params(
+            format!("invalid direction '{direction}': must be 'imports' or 'importers'"),
+            None,
+        ));
+    }
+
+    let db = Arc::clone(&state.db);
+    let file_path = args.file_path.clone();
+    let max_depth = args.depth.unwrap_or(3).min(10);
     let direction_clone = direction.clone();
 
     let tree = tokio::task::spawn_blocking(move || {
@@ -312,6 +324,8 @@ pub async fn get_type_hierarchy(
     state: &AppState,
     args: GetTypeHierarchyArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.type_name, "type_name")?;
+
     let db = Arc::clone(&state.db);
     let type_name = args.type_name.clone();
 
@@ -413,4 +427,72 @@ pub async fn get_type_hierarchy(
     Ok(CallToolResult::success(vec![rmcp::model::Content::text(
         output,
     )]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::indexer::languages::LanguageRegistry;
+    use std::path::PathBuf;
+
+    async fn setup_state() -> AppState {
+        let db = Database::init(&PathBuf::from(":memory:")).unwrap();
+        let registry = LanguageRegistry::new();
+        AppState::new(db, registry)
+    }
+
+    #[tokio::test]
+    async fn test_get_call_graph_empty_symbol_rejected() {
+        let state = setup_state().await;
+        let args = GetCallGraphArgs {
+            symbol: "".to_string(),
+            depth: None,
+        };
+        let result = get_call_graph(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_get_dependency_tree_empty_path_rejected() {
+        let state = setup_state().await;
+        let args = GetDependencyTreeArgs {
+            file_path: "".to_string(),
+            depth: None,
+            direction: None,
+        };
+        let result = get_dependency_tree(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_get_dependency_tree_invalid_direction_rejected() {
+        let state = setup_state().await;
+        let args = GetDependencyTreeArgs {
+            file_path: "src/main.rs".to_string(),
+            depth: None,
+            direction: Some("invalid".to_string()),
+        };
+        let result = get_dependency_tree(&state, args).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("must be 'imports' or 'importers'")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_type_hierarchy_empty_name_rejected() {
+        let state = setup_state().await;
+        let args = GetTypeHierarchyArgs {
+            type_name: " ".to_string(),
+        };
+        let result = get_type_hierarchy(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
 }
