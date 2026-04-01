@@ -127,7 +127,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
 
       - name: Upload local artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.target }}
           path: target/distrib/*
@@ -162,7 +162,7 @@ jobs:
         run: dist build --artifacts=global --tag=${{ needs.release.outputs.release_tag }}
 
       - name: Upload global artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-global
           path: target/distrib/*
