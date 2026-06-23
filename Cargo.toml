@@ -59,7 +59,7 @@ r2d2_sqlite = "0.25"
 
 # File watching
 notify-debouncer-full = "0.4"
-notify = "7"
+notify = "8"
 
 # Semantic search (optional)
 fastembed = { version = "5", optional = true }
