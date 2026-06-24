@@ -22,6 +22,8 @@ pub async fn index_repository(
     peer: Peer<RoleServer>,
     meta: Meta,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.path, "path")?;
+
     let root = PathBuf::from(&args.path);
 
     // Canonicalize the path to resolve symlinks and prevent traversal
@@ -101,6 +103,8 @@ pub async fn watch_repository(
     state: &AppState,
     args: WatchRepositoryArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.path, "path")?;
+
     let root = PathBuf::from(&args.path);
 
     // Canonicalize the path to resolve symlinks and prevent traversal

@@ -17,6 +17,8 @@ pub async fn get_file_summary(
     state: &AppState,
     args: GetFileSummaryArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.path, "path")?;
+
     let db = Arc::clone(&state.db);
     let path = args.path.clone();
 
@@ -111,7 +113,10 @@ pub async fn get_symbol_context(
     state: &AppState,
     args: GetSymbolContextArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
-    let ctx_lines = args.context_lines.unwrap_or(15);
+    super::require_non_empty(&args.symbol, "symbol")?;
+
+    // Cap at 50 to prevent excessively large responses
+    let ctx_lines = args.context_lines.unwrap_or(15).min(50);
     let db = Arc::clone(&state.db);
     let symbol = args.symbol.clone();
 
@@ -268,6 +273,8 @@ pub async fn get_file_changes(
     state: &AppState,
     args: GetFileChangesArgs,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
+    super::require_non_empty(&args.path, "path")?;
+
     let db = Arc::clone(&state.db);
     let path = args.path.clone();
 
@@ -468,5 +475,39 @@ mod tests {
         let result = get_file_changes(&state, args).await.unwrap();
         let text = format!("{:?}", result.content[0]);
         assert!(text.contains("File Status: src/main.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_get_file_summary_empty_path_rejected() {
+        let state = setup_state().await;
+        let args = GetFileSummaryArgs {
+            path: "".to_string(),
+        };
+        let result = get_file_summary(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_get_symbol_context_empty_symbol_rejected() {
+        let state = setup_state().await;
+        let args = GetSymbolContextArgs {
+            symbol: " ".to_string(),
+            context_lines: None,
+        };
+        let result = get_symbol_context(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_get_file_changes_empty_path_rejected() {
+        let state = setup_state().await;
+        let args = GetFileChangesArgs {
+            path: "".to_string(),
+        };
+        let result = get_file_changes(&state, args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("must not be empty"));
     }
 }
